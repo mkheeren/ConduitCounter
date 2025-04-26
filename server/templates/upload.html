@@ -1,230 +1,108 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Conduit Counter</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Conduit Counter</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
 </head>
 <body class="bg-light">
-    <div class="container">
-        <h1>Conduit Counter</h1>
+  <div class="container">
+    <h1 class="text-center my-4">Conduit Counter</h1>
 
-        <div class="row justify-content-center mb-4">
-            <div class="col-12 col-md-6 text-center">
-                <input type="file" id="imageUploader" accept="image/*" class="form-control mb-3">
-            </div>
-        </div>
-                
-        <div class="d-flex justify-content-center mt-3">
-                <button id="detectButton" class="btn btn-success w-100 mt-2" disabled>Detect Circles</button>
-            </div>
-        </div>
-
-        <div id="output"></div>
-
-        <div class="text-center mt-4">
-            <img id="result-image" src="" class="img-fluid" alt="Result">
-        </div>
+    <div class="row justify-content-center mb-4">
+      <div class="col-12 col-md-6 text-center">
+        <input type="file" id="imageUploader" accept="image/*" class="form-control mb-3">
+        <button id="detectButton" class="btn btn-success w-100" disabled>Detect Conduits</button>
+      </div>
     </div>
 
-    <script>
-        // grab all relevant elements
-        const imageUploader = document.getElementById('imageUploader');
-        const cropCanvas = document.getElementById('cropCanvas');
-        const cropCtx = cropCanvas.getContext('2d');
-        const cropButton = document.getElementById('cropButton');
+    <div id="output" class="text-center fs-4 mt-4"></div>
+  </div>
 
-        const selectCanvas = document.getElementById('selectCanvas');
-        const selectCtx = selectCanvas.getContext('2d');
-        const detectButton = document.getElementById('detectButton');
+  <canvas id="hiddenCanvas" style="display:none;"></canvas>
 
-        const output = document.getElementById('output');
-        const imageOutput = document.getElementById('result-image');
+  <script>
+    const imageUploader = document.getElementById('imageUploader');
+    const detectButton = document.getElementById('detectButton');
+    const output = document.getElementById('output');
+    const hiddenCanvas = document.getElementById('hiddenCanvas');
+    const ctx = hiddenCanvas.getContext('2d');
 
-        let uploadedImage = null;
-        let cropRect = null;
-        let points = [];
+    let uploadedImage = null;
 
-        //handle image upload
-        imageUploader.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                uploadedImage = new Image();
-                uploadedImage.onload = () => {
-                    // set canvas size to uploaded image size
-                    cropCanvas.width = uploadedImage.width;
-                    cropCanvas.height = uploadedImage.height;
+    imageUploader.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        uploadedImage = new Image();
+        uploadedImage.onload = () => {
+          hiddenCanvas.width = uploadedImage.width;
+          hiddenCanvas.height = uploadedImage.height;
+          ctx.drawImage(uploadedImage, 0, 0);
+          detectButton.disabled = false;
+        };
+        uploadedImage.src = URL.createObjectURL(file);
+      }
+    });
 
-                    // draw the image on the canvas, enable crop button
-                    cropCtx.drawImage(uploadedImage, 0, 0);
-                    cropButton.disabled = false;
-                };
-                uploadedImage.src = URL.createObjectURL(file);
-            }
-        });
+    detectButton.addEventListener('click', async () => {
+      if (!uploadedImage) return;
+      output.textContent = "Detecting conduits...";
+      detectButton.disabled = true;
 
-        // adjust the clicked canvas coordinate to true coordinates on ful res image
-        function getScaledCoordinates(event, canvas) {
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height; 
-
-            let clientX, clientY;
-
-            if (event.touches) {
-                // handle touch for mobile
-                clientX = event.touches[0].clientX;
-                clientY = event.touches[0].clientY;
-            } else {
-                // else use clicks for desktop
-                clientX = event.clientX;
-                clientY = event.clientY;
-            }
-
-            return {
-                x: (clientX - rect.left) * scaleX,
-                y: (clientY - rect.top) * scaleY,
-            };
+      hiddenCanvas.toBlob(async (blob) => {
+        try {
+            const base64Data = reader.result.split(',')[1]; 
+          const count = await sendToOllama(base64);
+          output.textContent = `Detected conduits: ${count}`;
+        } catch (err) {
+        console.error("Error details:", err);
+        output.textContent = `Error detecting conduits: ${err.message || err}`;
+        } finally {
+          detectButton.disabled = false;
         }
+      }, "image/png");
+    });
 
-        let isDragging = false;
-        let startX, startY;
+    async function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
 
-        //TODO - cropping is a bit broken on mobile. sometimes works, might be browser/device based. works fine on desktop.
-        // function to start drawing, sets initial x y coord of drawn rectangle
-        function startDrawing(event) {
-            const coords = getScaledCoordinates(event, cropCanvas);
-            startX = coords.x;
-            startY = coords.y;
-            isDragging = true;
-        }
+    const OLLAMA_URL = "http://localhost:11434";
+    const MODEL_NAME = "llava";
 
+    async function sendToOllama(base64Image) {
+      const body = {
+        model: MODEL_NAME,
+        prompt: "How many conduits are in this image? Only respond with a number.",
+        images: [base64Image]
+      };
 
-        function drawRectangle(event) {
-            if (!isDragging) return;
+      const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
 
-            const coords = getScaledCoordinates(event, cropCanvas);
-            const width = coords.x - startX;
-            const height = coords.y - startY;
+      if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+      const data = await res.json();
 
-            // redraw the image and then draw the rectangle ontop of it
-            cropCtx.drawImage(uploadedImage, 0, 0, cropCanvas.width, cropCanvas.height);
-            cropCtx.strokeStyle = "red";
-            cropCtx.lineWidth = 10;
-            cropCtx.strokeRect(startX, startY, width, height);
-        }
-
-        // end drawing of the rectangle, gets the current coords and creates a rectangle from them and starting coords
-        function endDrawing(event) {
-            if (!isDragging) return;
-
-            const coords = getScaledCoordinates(event, cropCanvas);
-
-            cropRect = {
-                x: Math.min(startX, coords.x),
-                y: Math.min(startY, coords.y),
-                width: Math.abs(coords.x - startX),
-                height: Math.abs(coords.y - startY),
-            };
-
-            isDragging = false;
-
-            // redraw rectangle one more time to ensure it is visible
-            cropCtx.drawImage(uploadedImage, 0, 0, cropCanvas.width, cropCanvas.height);
-            cropCtx.strokeStyle = "red";
-            cropCtx.lineWidth = 10;
-            cropCtx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
-        }
-
-
-        // event listeners for both mouse and touch events
-        cropCanvas.addEventListener('mousedown', startDrawing);
-        cropCanvas.addEventListener('mousemove', drawRectangle);
-        cropCanvas.addEventListener('mouseup', endDrawing);
-
-
-        cropCanvas.addEventListener('touchstart', (event) => {
-            event.preventDefault(); // stops scrolling on mobile
-            startDrawing(event);
-        });
-        cropCanvas.addEventListener('touchmove', (event) => {
-            event.preventDefault(); // stops scrolling on mobile
-            drawRectangle(event);
-        });
-        cropCanvas.addEventListener('touchend', endDrawing);
-
-        cropButton.addEventListener('click', () => {
-            if (!cropRect) {
-                // if user didn't draw a rectangle, just pass in the full image
-                selectCanvas.width = cropCanvas.width;
-                selectCanvas.height = cropCanvas.height;
-                selectCtx.drawImage(cropCanvas, 0, 0, cropCanvas.width, cropCanvas.height);
-
-                detectButton.disabled = false;
-                return;
-            }
-
-            // ger the cropped area from the original image, unscaled
-            const { x, y, width, height } = cropRect;
-            const croppedImage = cropCtx.getImageData(x, y, width, height);
-
-            // resize the second canvas to match the cropped area size and draw the cropped image
-            selectCanvas.width = width;
-            selectCanvas.height = height;
-            selectCtx.putImageData(croppedImage, 0, 0);
-
-            detectButton.disabled = false;
-            cropRect = null; // Reset crop for next image
-        });
-
-        let radius = 0;
-
-        // handle clicking/tapping for the diameter points on canvas 2
-        selectCanvas.addEventListener('click', (event) => {
-            const coords = getScaledCoordinates(event, selectCanvas);
-            const x = coords.x;
-            const y = coords.y;
-
-            points.push({ x, y });
-
-            // draw the dot
-            selectCtx.fillStyle = "red";
-            selectCtx.beginPath();
-            selectCtx.arc(x, y, 15, 0, Math.PI * 2);
-            selectCtx.fill();
-
-            // if 2 dots, calculate the radius
-            if (points.length == 2) {
-                const [p1, p2] = points;
-                radius = Math.sqrt( Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2) ) / 2;
-
-                output.textContent = `Radius of the circle: ${radius.toFixed(2)} pixels`;
-                points = []; // reset the points for redrawing / other images
-            }
-        });
-
-        detectButton.addEventListener('click', async () => {
-            // convert canvas to blob and send to the server
-            selectCanvas.toBlob(async (blob) => {
-                const formData = new FormData();
-                formData.append("file", blob);
-                formData.append('radius', parseInt(radius));
-
-                const response = await fetch("/", {
-                    method: "POST",
-                    body: formData
-                });
-
-                const result = await response.json();
-                console.log(result);
-                output.textContent = result.message;
-                // add salt so image reloads, even if given same path
-                imageOutput.src = result.result_image + `?salt=${new Date().getTime()}`;
-            });
-        });
-
-    </script>
+      // The answer will be inside `data.response`
+      const match = data.response.match(/\d+/);
+      if (match) {
+        return parseInt(match[0], 10);
+      } else {
+        throw new Error("No number found in Ollama's response");
+      }
+    }
+  </script>
 </body>
 </html>
